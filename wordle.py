@@ -90,12 +90,11 @@ async def create_user(data):
 async def userAuth( username, password ):
     db = await _get_db()
     # Selection query with raw queries
-    select_query = "SELECT * FROM user WHERE username= :username AND passwrd= :password"
-    values = {"username": username, "password": password}
-
     # Run the command
-    result = await db.fetch_one( select_query, values )
-
+    sql = "SELECT * FROM user WHERE username= :username AND passwrd= :password"
+    app.logger.debug(sql)
+    result = await db.fetch_one( sql, values = {"username": username, "password": password})
+    
     # Is the user registered?
     if result:
         return { "authenticated": "true" }, 200
@@ -110,27 +109,31 @@ async def create_game(data):
     db = await _get_db()
     username = dataclasses.asdict(data)
     # Check if username is in the database
-    valid_user = await db.fetch_one(
-        "SELECT username FROM user WHERE username = :username", username
-    )
+    query = "SELECT username FROM user WHERE username =  :username"
+    app.logger.debug(query)
+    valid_user = await db.fetch_one(query, username)
+
     if valid_user:
         # Retrieve User Id from their username
-        userid = await db.fetch_one(
-            "SELECT userid FROM user WHERE username = :username", username
-        )
+        query = "SELECT userid FROM user WHERE username = :username"
+        app.logger.debug(query)
+
+        userid = await db.fetch_one(query, username)
+            
 
         # Retrive random ID from the answers table
-        word = await db.fetch_one(
-            "SELECT answerid FROM answer ORDER BY RANDOM() LIMIT 1"
-        )
+        query = "SELECT answerid FROM answer ORDER BY RANDOM() LIMIT 1"
+        app.logger.debug(query)
+        word = await db.fetch_one(query)
+
         # Check if the retrived word is a repeat for the user, and if so grab a new word
-        while await db.fetch_one(
-            "SELECT answerid FROM games WHERE userid = :userid AND answerid = :answerid",
-            values={"userid": userid[0], "answerid": word[0]},
-        ):
-            word = await db.fetch_one(
-                "SELECT answerid FROM answer ORDER BY RANDOM() LIMIT 1"
-            )
+        query = "SELECT answerid FROM games WHERE userid = :userid AND answerid = :answerid"
+        app.logger.debug(query)
+        while await db.fetch_one(query,  values={"userid": userid[0], "answerid": word[0]}
+            ):
+            query = "SELECT answerid FROM answer ORDER BY RANDOM() LIMIT 1"
+            app.logger.debug(query)
+            word = await db.fetch_one(query)
 
         # Create new game with 0 guesses
         query = "INSERT INTO game(guesses, gstate) VALUES(:guesses, :gstate)"
@@ -159,9 +162,10 @@ async def add_guess(data):
 
     currGame = dataclasses.asdict(data)
     #checks whether guessed word is the answer for that game
-    isAnswer= await db.fetch_one(
-        "SELECT * FROM answer as a where (select count(*) from games where gameid = :gameid and answerid = a.answerid)>=1 and a.answord = :word;", currGame
-        )
+    query = "SELECT * FROM answer as a where (select count(*) from games where gameid = :gameid and answerid = a.answerid)>=1 and a.answord = :word;"
+    app.logger.debug(query)
+    isAnswer= await db.fetch_one(query, currGame)
+
     #is guessed word the answer
     if isAnswer is not None and len(isAnswer) >= 1:
         #update game status
@@ -175,13 +179,21 @@ async def add_guess(data):
             abort(404, e)
         return {"guessedWord":currGame["word"], "Accuracy":u'\u2713'*5},201 #should return correct answer? 
     #if 1 then word is valid otherwise it isn't valid and also check if they exceed guess limit
-    isValidGuess = await db.fetch_one("SELECT * from valid_word where valword = :word;", values={"word":currGame["word"]})
-    guessNum = await db.fetch_one("SELECT guesses from game where gameid = :gameid",values={"gameid":currGame["gameid"]})
+    query = "SELECT * from valid_word where valword = :word;"
+    app.logger.debug(query)
+    isValidGuess = await db.fetch_one(query, values={"word":currGame["word"]})
+    
+    query = "SELECT guesses from game where gameid = :gameid"
+    app.logger.debug(query)
+    guessNum = await db.fetch_one(query, values={"gameid":currGame["gameid"]})
+   
     accuracy = ""
     if(isValidGuess is not None and len(isValidGuess) >= 1 and guessNum[0] < 6):
         try: 
             #make a dict mapping each character and its position from the answer
-            answord = await db.fetch_one("SELECT answord FROM answer as a, games as g  where g.gameid = :gameid and g.answerid = a.answerid",values={"gameid":currGame["gameid"]})
+            query = "SELECT answord FROM answer as a, games as g  where g.gameid = :gameid and g.answerid = a.answerid"
+            app.logger.debug(query)
+            answord = await db.fetch_one(query ,values={"gameid":currGame["gameid"]})
             ansDict = {}
             for i in range(len(answord[0])):
                 ansDict[answord[0][i]] = i
@@ -223,12 +235,15 @@ async def add_guess(data):
 @app.route("/games/<string:username>/all", methods=["GET"])
 async def all_games(username):
     db = await _get_db()
+    query = "SELECT userid FROM user WHERE username = :username"
+    app.logger.debug(query)
 
-    userid = await db.fetch_one(
-            "SELECT userid FROM user WHERE username = :username", values={"username":username})
+    userid = await db.fetch_one(query, values={"username":username})
+    
     if userid:
-
-        games_val = await db.fetch_all( "SELECT * FROM game as a where gameid IN (select gameid from games where userid = :userid) and a.gstate = :gstate;", values = {"userid":userid[0],"gstate":"In-progress"})
+        query = "SELECT * FROM game as a where gameid IN (select gameid from games where userid = :userid) and a.gstate = :gstate;"
+        app.logger.debug(query)
+        games_val = await db.fetch_all(query, values = {"userid":userid[0],"gstate":"In-progress"})
         
         if games_val is None or len(games_val) == 0:
             return { "Message": "No Active Games" },406
@@ -241,12 +256,14 @@ async def all_games(username):
 @app.route("/games/<string:username>/<int:gameid>", methods=["GET"])
 async def my_game(username,gameid):
     db = await _get_db()
+    query = "SELECT userid FROM user WHERE username = :username"
+    app.logger.debug(query)
+    userid = await db.fetch_one(query, values={"username":username})
 
-    userid = await db.fetch_one(
-            "SELECT userid FROM user WHERE username = :username", values={"username":username})
     if userid:
-
-        guess_val = await db.fetch_all( "SELECT a.*, b.guesses, b.gstate FROM guess as a, game as b WHERE a.gameid = b.gameid and a.gameid = :gameid", values={"gameid":gameid})
+        query = "SELECT a.*, b.guesses, b.gstate FROM guess as a, game as b WHERE a.gameid = b.gameid and a.gameid = :gameid"
+        app.logger.debug(query)
+        guess_val = await db.fetch_all(query, values={"gameid":gameid})
 
         if guess_val is None or len(guess_val) == 0:
             
